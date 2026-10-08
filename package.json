@@ -1,0 +1,8 @@
+{
+  "name": "road-racer-server",
+  "version": "1.0.0",
+  "description": "Road Racer online lobby server",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "dependencies": { "express": "^4.21.2", "ws": "^8.18.0" }
+}
