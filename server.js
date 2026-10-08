@@ -1,67 +1,271 @@
 const express = require("express");
 const http = require("http");
 const { WebSocketServer } = require("ws");
+const crypto = require("crypto");
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
-app.get("/", (req, res) => res.send("Road Racer Online Server is running!"));
+app.get("/", (req, res) => {
+  res.send("Road Racer Online Server is running!");
+});
 
-const lobbies = new Map();
-const send = (ws, data) => ws.readyState === 1 && ws.send(JSON.stringify(data));
-const broadcast = (lobby, data) => lobby.players.forEach(p => send(p.ws, data));
+const rooms = new Map();
+
+function send(ws, data) {
+  if (ws.readyState === 1) {
+    ws.send(JSON.stringify(data));
+  }
+}
+
+function broadcast(room, data) {
+  for (const player of room.players) {
+    send(player.ws, data);
+  }
+}
+
+function makeId() {
+  return crypto.randomUUID();
+}
+
+function makeRoomCode() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+  let code;
+
+  do {
+    code = "";
+
+    for (let i = 0; i < 6; i++) {
+      code += chars[Math.floor(Math.random() * chars.length)];
+    }
+  } while (rooms.has(code));
+
+  return code;
+}
+
+function publicRoom(room) {
+  return {
+    code: room.code,
+    hostId: room.hostId,
+    settings: room.settings,
+    players: room.players.map(p => ({
+      id: p.id,
+      name: p.name
+    }))
+  };
+}
+
+function sendRoom(room) {
+  broadcast(room, {
+    type: "room",
+    room: publicRoom(room)
+  });
+
+  broadcast(room, {
+    type: "players",
+    players: room.players.map(p => ({
+      id: p.id,
+      name: p.name
+    }))
+  });
+}
 
 wss.on("connection", ws => {
-  let lobbyCode = null;
-  let name = "Player";
-  send(ws, { type: "connected" });
+  const playerId = makeId();
+
+  let currentRoom = null;
+
+  send(ws, {
+    type: "welcome",
+    id: playerId
+  });
 
   ws.on("message", raw => {
     let msg;
-    try { msg = JSON.parse(raw.toString()); } catch { return send(ws, { type: "error", message: "Invalid message" }); }
 
-    if (msg.type === "createLobby") {
-      let code;
-      do { code = Math.random().toString(36).slice(2, 7).toUpperCase(); } while (lobbies.has(code));
-      name = msg.name || "Player";
-      const lobby = { code, players: [{ ws, name }] };
-      lobbies.set(code, lobby);
-      lobbyCode = code;
-      return send(ws, { type: "lobbyCreated", code, players: [name] });
+    try {
+      msg = JSON.parse(raw.toString());
+    } catch {
+      send(ws, {
+        type: "error",
+        message: "Неверный запрос"
+      });
+      return;
     }
 
-    if (msg.type === "joinLobby") {
+    // СОЗДАНИЕ ЛОББИ
+    if (msg.type === "createRoom") {
+      if (currentRoom) {
+        send(ws, {
+          type: "error",
+          message: "Ты уже находишься в лобби"
+        });
+        return;
+      }
+
+      const code = makeRoomCode();
+
+      const room = {
+        code,
+        hostId: playerId,
+        settings: {
+          map: msg.settings?.map || "desert",
+          laps: Number(msg.settings?.laps) || 2,
+          obstacles: msg.settings?.obstacles || {}
+        },
+        players: []
+      };
+
+      const player = {
+        id: playerId,
+        name: String(msg.name || "Гонщик").slice(0, 16),
+        ws
+      };
+
+      room.players.push(player);
+
+      rooms.set(code, room);
+      currentRoom = code;
+
+      sendRoom(room);
+      return;
+    }
+
+    // ВХОД В ЛОББИ
+    if (msg.type === "joinRoom") {
       const code = String(msg.code || "").toUpperCase();
-      const lobby = lobbies.get(code);
-      if (!lobby) return send(ws, { type: "error", message: "Лобби не найдено" });
-      if (lobby.players.length >= 8) return send(ws, { type: "error", message: "Лобби заполнено" });
-      name = msg.name || "Player";
-      lobby.players.push({ ws, name });
-      lobbyCode = code;
-      return broadcast(lobby, { type: "players", players: lobby.players.map(p => p.name) });
+      const room = rooms.get(code);
+
+      if (!room) {
+        send(ws, {
+          type: "error",
+          message: "Лобби не найдено"
+        });
+        return;
+      }
+
+      if (room.players.length >= 8) {
+        send(ws, {
+          type: "error",
+          message: "Лобби заполнено"
+        });
+        return;
+      }
+
+      if (currentRoom) {
+        send(ws, {
+          type: "error",
+          message: "Ты уже находишься в лобби"
+        });
+        return;
+      }
+
+      room.players.push({
+        id: playerId,
+        name: String(msg.name || "Гонщик").slice(0, 16),
+        ws
+      });
+
+      currentRoom = code;
+
+      sendRoom(room);
+      return;
     }
 
-    if (msg.type === "startGame" && lobbyCode) {
-      const lobby = lobbies.get(lobbyCode);
-      if (lobby) broadcast(lobby, { type: "gameStarted" });
+    // ИЗМЕНЕНИЕ НАСТРОЕК
+    if (msg.type === "settings") {
+      if (!currentRoom) return;
+
+      const room = rooms.get(currentRoom);
+      if (!room) return;
+
+      if (room.hostId !== playerId) {
+        send(ws, {
+          type: "error",
+          message: "Только хост может менять настройки"
+        });
+        return;
+      }
+
+      room.settings = {
+        map: msg.settings?.map || room.settings.map,
+        laps: Number(msg.settings?.laps) || room.settings.laps,
+        obstacles: msg.settings?.obstacles || room.settings.obstacles
+      };
+
+      sendRoom(room);
+      return;
     }
 
-    if (msg.type === "state" && lobbyCode) {
-      const lobby = lobbies.get(lobbyCode);
-      if (lobby) broadcast(lobby, { type: "state", player: name, state: msg.state });
+    // ЗАПУСК ГОНКИ
+    if (
+      msg.type === "startRace" ||
+      msg.type === "startGame"
+    ) {
+      if (!currentRoom) return;
+
+      const room = rooms.get(currentRoom);
+      if (!room) return;
+
+      if (room.hostId !== playerId) {
+        send(ws, {
+          type: "error",
+          message: "Только хост может начать гонку"
+        });
+        return;
+      }
+
+      broadcast(room, {
+        type: "raceStart",
+        settings: room.settings
+      });
+
+      return;
+    }
+
+    // ПЕРЕДАЧА СОСТОЯНИЯ ИГРОКОВ
+    if (msg.type === "state") {
+      if (!currentRoom) return;
+
+      const room = rooms.get(currentRoom);
+      if (!room) return;
+
+      broadcast(room, {
+        type: "state",
+        playerId,
+        state: msg.state
+      });
+
+      return;
     }
   });
 
   ws.on("close", () => {
-    if (!lobbyCode) return;
-    const lobby = lobbies.get(lobbyCode);
-    if (!lobby) return;
-    lobby.players = lobby.players.filter(p => p.ws !== ws);
-    if (!lobby.players.length) lobbies.delete(lobbyCode);
-    else broadcast(lobby, { type: "players", players: lobby.players.map(p => p.name) });
+    if (!currentRoom) return;
+
+    const room = rooms.get(currentRoom);
+    if (!room) return;
+
+    room.players = room.players.filter(p => p.id !== playerId);
+
+    if (room.players.length === 0) {
+      rooms.delete(currentRoom);
+      return;
+    }
+
+    // Если хост вышел — передаём хостинг следующему игроку
+    if (room.hostId === playerId) {
+      room.hostId = room.players[0].id;
+    }
+
+    sendRoom(room);
   });
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, "0.0.0.0", () => console.log(`Road Racer Online Server running on port ${PORT}`));
+
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`Road Racer Online Server running on port ${PORT}`);
+});
