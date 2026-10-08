@@ -226,6 +226,7 @@ wss.on("connection", ws => {
     }
 
 // ПЕРЕДАЧА СОСТОЯНИЯ ИГРОКОВ
+// ПЕРЕДАЧА СОСТОЯНИЯ ИГРОКОВ
 if (msg.type === "update") {
   if (!currentRoom) return;
 
@@ -235,12 +236,27 @@ if (msg.type === "update") {
   const player = room.players.find(p => p.id === playerId);
   if (!player) return;
 
-  player.state = msg.state;
+  player.state = {
+    lane: Number(msg.lane) || 0,
+    distance: Number(msg.distance) || 0,
+    speed: Number(msg.speed) || 0,
+    color: msg.color || "#ffffff",
+    car: msg.car || "default"
+  };
 
   broadcast(room, {
-    type: "state",
-    playerId,
-    state: msg.state
+    type: "players",
+    players: room.players
+      .filter(p => p.id !== playerId)
+      .map(p => ({
+        id: p.id,
+        name: p.name,
+        lane: p.state?.lane || 0,
+        distance: p.state?.distance || 0,
+        speed: p.state?.speed || 0,
+        color: p.state?.color || "#ffffff",
+        car: p.state?.car || "default"
+      }))
   });
 
   return;
