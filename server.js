@@ -224,6 +224,8 @@ wss.on("connection", ws => {
 
       return;
     }
+
+    
     // ПЕРЕДАЧА СОСТОЯНИЯ ИГРОКОВ
 if (msg.type === "update") {
   if (!currentRoom) return;
