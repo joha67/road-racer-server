@@ -31,7 +31,6 @@ function makeId() {
 
 function makeRoomCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-
   let code;
 
   do {
@@ -74,7 +73,6 @@ function sendRoom(room) {
 
 wss.on("connection", ws => {
   const playerId = makeId();
-
   let currentRoom = null;
 
   send(ws, {
@@ -121,7 +119,14 @@ wss.on("connection", ws => {
       const player = {
         id: playerId,
         name: String(msg.name || "Гонщик").slice(0, 16),
-        ws
+        ws,
+        state: {
+          lane: 0,
+          distance: 0,
+          speed: 0,
+          color: "#ffffff",
+          car: "default"
+        }
       };
 
       room.players.push(player);
@@ -165,7 +170,14 @@ wss.on("connection", ws => {
       room.players.push({
         id: playerId,
         name: String(msg.name || "Гонщик").slice(0, 16),
-        ws
+        ws,
+        state: {
+          lane: 0,
+          distance: 0,
+          speed: 0,
+          color: "#ffffff",
+          car: "default"
+        }
       });
 
       currentRoom = code;
@@ -192,7 +204,8 @@ wss.on("connection", ws => {
       room.settings = {
         map: msg.settings?.map || room.settings.map,
         laps: Number(msg.settings?.laps) || room.settings.laps,
-        obstacles: msg.settings?.obstacles || room.settings.obstacles
+        obstacles:
+          msg.settings?.obstacles || room.settings.obstacles
       };
 
       sendRoom(room);
@@ -225,50 +238,56 @@ wss.on("connection", ws => {
       return;
     }
 
-    
     // ПЕРЕДАЧА СОСТОЯНИЯ ИГРОКОВ
-if (msg.type === "update") {
-  if (!currentRoom) return;
+    if (msg.type === "update") {
+      if (!currentRoom) return;
 
-  const room = rooms.get(currentRoom);
-  if (!room) return;
+      const room = rooms.get(currentRoom);
+      if (!room) return;
 
-  const player = room.players.find(p => p.id === playerId);
-  if (!player) return;
+      const player = room.players.find(
+        p => p.id === playerId
+      );
 
-  player.state = {
-    lane: Number(msg.lane) || 0,
-    distance: Number(msg.distance) || 0,
-    speed: Number(msg.speed) || 0,
-    color: msg.color || "#ffffff",
-    car: msg.car || "default"
-  };
+      if (!player) return;
 
-  broadcast(room, {
-    type: "players",
-    players: room.players
-      .filter(p => p.id !== playerId)
-      .map(p => ({
-        id: p.id,
-        name: p.name,
-        lane: p.state?.lane || 0,
-        distance: p.state?.distance || 0,
-        speed: p.state?.speed || 0,
-        color: p.state?.color || "#ffffff",
-        car: p.state?.car || "default"
-      }))
+      player.state = {
+        lane: Number(msg.lane) || 0,
+        distance: Number(msg.distance) || 0,
+        speed: Number(msg.speed) || 0,
+        color: msg.color || "#ffffff",
+        car: msg.car || "default"
+      };
+
+      broadcast(room, {
+        type: "players",
+        players: room.players
+          .filter(p => p.id !== playerId)
+          .map(p => ({
+            id: p.id,
+            name: p.name,
+            lane: p.state?.lane || 0,
+            distance: p.state?.distance || 0,
+            speed: p.state?.speed || 0,
+            color: p.state?.color || "#ffffff",
+            car: p.state?.car || "default"
+          }))
+      });
+
+      return;
+    }
   });
 
-  return;
-}
-
+  // ИГРОК ВЫШЕЛ
   ws.on("close", () => {
     if (!currentRoom) return;
 
     const room = rooms.get(currentRoom);
     if (!room) return;
 
-    room.players = room.players.filter(p => p.id !== playerId);
+    room.players = room.players.filter(
+      p => p.id !== playerId
+    );
 
     if (room.players.length === 0) {
       rooms.delete(currentRoom);
@@ -287,5 +306,7 @@ if (msg.type === "update") {
 const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, "0.0.0.0", () => {
-  console.log(`Road Racer Online Server running on port ${PORT}`);
+  console.log(
+    `Road Racer Online Server running on port ${PORT}`
+  );
 });
